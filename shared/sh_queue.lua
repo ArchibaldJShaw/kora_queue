@@ -52,11 +52,15 @@ for id, power in pairs(Config.Priority) do
     _Queue.Priority[string_lower(id)] = power
 end
 
-function Queue:DebugPrint(msg)
-    if Queue.Debug then
-        msg = "^3QUEUE: ^0" .. tostring(msg) .. "^7"
-        print(msg)
+-- Debug-only diagnostics, still gated by Queue.Debug. Preferred form is
+-- (event, message, fields); the legacy single-string form is kept for operator
+-- console commands and any external caller and is logged as one `detail` field.
+function Queue:DebugPrint(event, message, fields)
+    if not Queue.Debug then return end
+    if message == nil then
+        return Kora.logging.debug('queue.debug', 'Queue debug', { detail = tostring(event) })
     end
+    return Kora.logging.debug(event, message, fields)
 end
 
 -- Converts a hex "steam:" identifier to the legacy steam_0 form. Anything else
@@ -221,7 +225,7 @@ function Queue:AddToQueue(ids, connectTime, name, src, deferrals)
             end
 
             if _pos then
-                Queue:DebugPrint(string_format("%s[%s] was prioritized and placed %d/%d in queue", tmp.name, ids[1], _pos, queueCount))
+                Queue:DebugPrint('queue.prioritized', 'Player was prioritized and placed in queue', { name = tmp.name, position = _pos, queueCount = queueCount })
                 break
             end
         end
@@ -229,7 +233,7 @@ function Queue:AddToQueue(ids, connectTime, name, src, deferrals)
 
     if not _pos then
         _pos = Queue:GetSize() + 1
-        Queue:DebugPrint(string_format("%s[%s] was placed %d/%d in queue", tmp.name, ids[1], _pos, queueCount))
+        Queue:DebugPrint('queue.placed', 'Player was placed in queue', { name = tmp.name, position = _pos, queueCount = queueCount })
     end
 
     table_insert(queueList, _pos, tmp)
@@ -316,7 +320,7 @@ function Queue:AddToConnecting(ids, ignorePos, autoRemove, done)
         done(Config.Language.connectingerr)
         Queue:RemoveFromConnecting(ids)
         Queue:RemoveFromQueue(ids)
-        Queue:DebugPrint("Player could not be added to the connecting list")
+        Queue:DebugPrint('queue.connecting_add_failed', 'Player could not be added to the connecting list', {})
     end
 
     local connList = Queue:GetConnectingList()
@@ -366,7 +370,7 @@ function Queue:AddPriority(id, power, temp)
             if _id and type(_id) == "string" and power and type(power) == "number" then
                 Queue:GetPriorityList()[_id] = power
             else
-                Queue:DebugPrint("Error adding a priority id, invalid data passed")
+                Queue:DebugPrint('queue.priority_id_invalid', 'Error adding a priority id, invalid data passed', {})
                 return false
             end
         end
@@ -670,7 +674,7 @@ local function playerConnect(name, setKickReason, deferrals)
     if not ids then
         done(Config.Language.idrr)
         CancelEvent()
-        Queue:DebugPrint("Dropped " .. name .. ", couldn't retrieve any of their id's")
+        Queue:DebugPrint('queue.dropped_no_identifiers', "Dropped player, couldn't retrieve any of their identifiers", { name = name })
         return
     end
 
@@ -691,7 +695,7 @@ local function playerConnect(name, setKickReason, deferrals)
             done(reason and tostring(reason) or Kora.lang('queue.blocked'))
             Queue:RemoveFromQueue(ids)
             Queue:RemoveFromConnecting(ids)
-            Queue:DebugPrint(string_format("%s[%s] was blocked from joining; Reason: %s", name, ids[1], reason))
+            Queue:DebugPrint('queue.join_blocked', 'Player was blocked from joining', { name = name, reason = tostring(reason) })
             CancelEvent()
             return
         end
@@ -732,7 +736,7 @@ local function playerConnect(name, setKickReason, deferrals)
     if Queue:IsInQueue(ids) then
         rejoined = true
         Queue:UpdatePosData(src, ids, deferrals)
-        Queue:DebugPrint(string_format("%s[%s] has rejoined queue after cancelling", name, ids[1]))
+        Queue:DebugPrint('queue.rejoined', 'Player rejoined the queue after cancelling', { name = name })
     else
         Queue:AddToQueue(ids, connectTime, name, src, deferrals)
 
@@ -759,7 +763,7 @@ local function playerConnect(name, setKickReason, deferrals)
         if not added then CancelEvent() return end
 
         done()
-        Queue:DebugPrint(name .. "[" .. ids[1] .. "] is loading into the server")
+        Queue:DebugPrint('queue.loading_in', 'Player is loading into the server', { name = name })
 
         return
     end
@@ -790,7 +794,7 @@ local function playerConnect(name, setKickReason, deferrals)
 
         if not data or not data.deferrals or not data.source or not pos then
             remove(Kora.lang('queue.invalid_queue_data'))
-            Queue:DebugPrint(tostring(name .. "[" .. ids[1] .. "] was removed from the queue because they had invalid data"))
+            Queue:DebugPrint('queue.removed_invalid_data', 'Player was removed from the queue because of invalid data', { name = tostring(name) })
             return
         end
 
@@ -799,7 +803,7 @@ local function playerConnect(name, setKickReason, deferrals)
 
         if data.timeout >= Config.QueueTimeOut and os_time() - connectTime > 5 then
             remove(Kora.lang('queue.removed_timeout'))
-            Queue:DebugPrint(name .. "[" .. ids[1] .. "] was removed from the queue because they timed out")
+            Queue:DebugPrint('queue.removed_timed_out', 'Player was removed from the queue because they timed out', { name = name })
             return
         end
 
@@ -820,7 +824,7 @@ local function playerConnect(name, setKickReason, deferrals)
             if Config.EnableGrace then Queue:AddPriority(ids[1], Config.GracePower, Config.GraceTime) end
 
             Queue:RemoveFromQueue(ids)
-            Queue:DebugPrint(name .. "[" .. ids[1] .. "] is loading into the server")
+            Queue:DebugPrint('queue.loading_in', 'Player is loading into the server', { name = name })
             return
         end
 
@@ -856,7 +860,7 @@ Citizen.CreateThread(function()
     
             if ((data.timeout >= 300 and not endPoint) or data.timeout >= Config.ConnectTimeOut) and data.source ~= "debug" and os_time() - data.firstconnect > 5 then
                 remove(data)
-                Queue:DebugPrint(data.name .. "[" .. data.ids[1] .. "] was removed from the connecting queue because they timed out")
+                Queue:DebugPrint('queue.connecting_timed_out', 'Player was removed from the connecting queue because they timed out', { name = data.name })
             else
                 i = i + 1
             end
@@ -922,7 +926,7 @@ AddEventHandler("onResourceStop", function(resource)
 end)
 
 if Config.DisableHardCap then
-    Queue:DebugPrint("^1 [connectqueue] Disabling hardcap ^7")
+    Queue:DebugPrint('queue.hardcap_disabled', 'Disabling hardcap', {})
 
     AddEventHandler("onResourceStarting", function(resource)
         if resource == "hardcap" then CancelEvent() return end
